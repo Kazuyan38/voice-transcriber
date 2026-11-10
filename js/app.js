@@ -612,12 +612,9 @@ $("#auth-form").addEventListener("submit", async (e) => {
     if (authMode === "login") {
       await cloud.signIn(email, pass);
       afterLogin();
-    } else if (await cloud.signUp(email, pass)) {
-      afterLogin();
     } else {
-      info.textContent = `${email} に確認メールを送りました。メールのリンクを開くと登録が完了し、このアプリに戻ります。`;
-      info.hidden = false;
-      setAuthMode("login");
+      await cloud.signUp(email, pass);
+      afterLogin();
     }
   } catch (ex) {
     err.textContent = ex.message;

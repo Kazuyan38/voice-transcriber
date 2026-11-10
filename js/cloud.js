@@ -59,6 +59,7 @@ function authMessage(j) {
     invalid_credentials: "メールアドレスまたはパスワードが違います。",
     invalid_grant: "メールアドレスまたはパスワードが違います。",
     email_not_confirmed: "メールアドレスの確認が済んでいません。届いたメールのリンクを開いてください。",
+    email_exists: "このメールアドレスは登録済みです。ログインしてください。",
     user_already_exists: "このメールアドレスは登録済みです。ログインしてください。",
     weak_password: "パスワードが短すぎます（8 文字以上）。",
     over_email_send_rate_limit: "確認メールの送信回数が上限に達しました。しばらく待ってから再度お試しください。",
@@ -81,15 +82,15 @@ export async function signIn(email, password) {
   await adopt(fromAuthResponse(await authFetch("token?grant_type=password", { email, password })));
 }
 
-// 戻り値 true = 即ログイン済み / false = 確認メール待ち
+// 新規登録（メール確認なし）。確認済みのアカウントを Edge Function で作り、そのままログインする。
 export async function signUp(email, password) {
-  const redirect = location.origin + location.pathname;
-  const j = await authFetch(`signup?redirect_to=${encodeURIComponent(redirect)}`, { email, password });
-  if (j.access_token) {
-    await adopt(fromAuthResponse(j));
-    return true;
-  }
-  return false;
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/signup`, {
+    method: "POST",
+    headers: { apikey: SUPABASE_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error(authMessage(await res.json().catch(() => ({}))));
+  await signIn(email, password);
 }
 
 // 確認メールのリンクから戻ってきたとき（#access_token=... 付き）
