@@ -115,10 +115,15 @@ export async function wipe() {
   changed(null);
 }
 
+// 題名を付けなかった録音の既定の題名「11月11日 14:30」（録音を始めた日時）
+export function defaultTitle(iso) {
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
 export function newRecord(fields) {
-  return {
+  const rec = {
     id: crypto.randomUUID(),
-    title: "",
     recorded_at: new Date().toISOString(),
     duration_sec: 0,
     mime: null,
@@ -137,4 +142,6 @@ export function newRecord(fields) {
     dirty: true,
     ...fields,
   };
+  rec.title ??= defaultTitle(rec.recorded_at); // サーバ由来の行は title を持つので、空でもそのまま
+  return rec;
 }

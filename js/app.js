@@ -3,7 +3,7 @@ import * as cloud from "./cloud.js";
 import * as asr from "./asr.js";
 import { Recording, supported as canRecord, recoverOrphans } from "./recorder.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
@@ -34,7 +34,11 @@ function dayLabel(iso) {
   const w = "日月火水木金土"[d.getDay()];
   return d.getFullYear() === now.getFullYear() ? `${d.getMonth() + 1}月${d.getDate()}日（${w}）` : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日（${w}）`;
 }
-const titleOf = (r) => r.title?.trim() || `${fmtTime(r.recorded_at)} の録音`;
+const titleOf = (r) => r.title?.trim() || store.defaultTitle(r.recorded_at);
+const fmtEta = (sec) => {
+  const m = Math.max(1, Math.ceil(sec / 60));
+  return m < 60 ? `${m} 分` : `${Math.floor(m / 60)} 時間 ${m % 60} 分`;
+};
 const fmtBytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}GB` : n >= 1e6 ? `${Math.round(n / 1e6)}MB` : `${Math.round(n / 1e3)}KB`);
 
 // 一覧・詳細で共通の状態表示
@@ -43,13 +47,13 @@ function statusOf(r) {
   if (asr.currentId() === r.id) {
     const p = asrState.id === r.id || asrState.phase === "download" ? asrState : { phase: "loading" };
     if (p.phase === "download") return { text: `モデルを取得中 ${Math.round((p.progress ?? 0) * 100)}%`, strong: true, progress: p.progress };
-    if (p.phase === "running") return { text: `文字起こし中 ${Math.round((p.progress ?? 0) * 100)}%`, strong: true, progress: p.progress };
+    if (p.phase === "running") return { text: `文字起こし中 ${Math.round((p.progress ?? 0) * 100)}%${p.eta != null ? `・あと約 ${fmtEta(p.eta)}` : ""}`, strong: true, progress: p.progress };
     if (p.phase === "decoding") return { text: "音声を読み込み中", strong: true, progress: 0 };
     return { text: "準備中", strong: true, progress: 0 };
   }
+  if (asr.isQueued(r.id)) return { text: "文字起こし待ち" };
   if (r.transcript_status === "failed") return { text: "文字起こし失敗" };
   if (r.transcript_status === "pending") {
-    if (asr.isQueued(r.id)) return { text: "文字起こし待ち" };
     return { text: r.has_audio || r.audio_path ? "未文字起こし" : "音声なし" };
   }
   return r.minutes ? { text: "議事録あり" } : { text: "議事録待ち" };
@@ -96,7 +100,7 @@ function renderList() {
           <div style="min-width:0">
             <div class="title">${esc(titleOf(r))}</div>
             <div class="meta num">
-              ${r.title?.trim() ? `<span>${fmtTime(r.recorded_at)}</span>` : ""}
+              ${r.title?.trim() && r.title !== store.defaultTitle(r.recorded_at) ? `<span>${fmtTime(r.recorded_at)}</span>` : ""}
               <span>${clock(r.duration_sec)}</span>
               <span class="${st.strong ? "strong" : ""}">${esc(st.text)}</span>
               ${unsynced(r) ? `<span>未同期</span>` : ""}
@@ -253,10 +257,11 @@ async function renderDetailDynamic() {
 
   const parts = [];
   // 文字起こしの状態と操作
-  if (r.transcript_status !== "done" && !r.recording) {
-    const running = asr.currentId() === r.id;
+  const running = asr.currentId() === r.id;
+  const queued = asr.isQueued(r.id);
+  if ((r.transcript_status !== "done" || running || queued || r.asr_error) && !r.recording) {
     let action = "";
-    if (!running && !asr.isQueued(r.id)) {
+    if (!running && !queued && r.transcript_status !== "done") {
       if (r.has_audio) action = `<button class="btn" data-act="transcribe">${r.transcript_status === "failed" ? "もう一度文字起こしする" : "文字起こしを開始"}</button>`;
       else if (r.audio_path) action = `<button class="btn" data-act="fetch-transcribe">音声を取得して文字起こし</button>`;
     }
@@ -264,6 +269,7 @@ async function renderDetailDynamic() {
       <div class="row" style="justify-content:space-between"><b>${esc(st.text)}</b>${action}</div>
       ${st.progress !== undefined ? `<div class="bar"><i style="width:${Math.round((st.progress ?? 0) * 100)}%"></i></div>` : ""}
       ${r.asr_error ? `<p class="error">${esc(r.asr_error)}</p>` : ""}
+      ${!running && !queued && r.transcript_status === "pending" && asr.exceedsAuto(r) ? `<p class="note">スマホでは ${asr.MOBILE_AUTO_MAX_SEC / 60} 分を超える録音は自動で文字起こしを始めません（メモリと時間の都合）。同期して PC で開くのがおすすめです。このまま開始することもできます。</p>` : ""}
       ${running ? `<p class="note">文字起こしはこの端末の中で行います（音声は外部に送られません）。画面を開いたままにしてください。</p>` : ""}
     </div>`);
   }
@@ -287,6 +293,11 @@ async function renderDetailDynamic() {
       <h2 style="margin:0">文字起こし</h2>
       ${r.transcript_status === "done" ? `<button class="btn quiet small" data-act="copy-transcript">コピー</button>` : ""}
     </div>`);
+  if (r.transcript_status === "done" && r.has_audio && !running && !queued && !r.recording) {
+    const others = asr.MODELS.filter((m) => m.id !== r.asr_model && (!m.id.includes("large") || navigator.gpu));
+    parts.push(`<div class="row" style="margin-bottom:10px">${others.map((m) => `<button class="btn quiet small" data-act="retranscribe" data-model="${m.id}">${m.short}で文字起こしし直す</button>`).join("")}</div>
+      <p class="note" style="margin-top:0">完了すると今の文字起こしを置き換えます。作成済みの議事録は変わりません。</p>`);
+  }
   if (segs?.length) {
     parts.push(`<ul class="transcript">${segs.map((s) => `<li><button class="ts num" data-t="${s.t}">${clock(s.t)}</button><span>${esc(s.text)}</span></li>`).join("")}</ul>`);
   } else if (r.transcript_status === "done") {
@@ -334,6 +345,9 @@ $("#view-detail").addEventListener("click", async (e) => {
     case "transcribe":
       await store.patch(id, { transcript_status: "pending", asr_error: null });
       asr.enqueue(id);
+      return scheduleRender();
+    case "retranscribe":
+      asr.enqueue(id, t.dataset.model);
       return scheduleRender();
     case "fetch-audio":
     case "fetch-transcribe":
@@ -509,7 +523,8 @@ async function renderSettings() {
       </div>
       <h2>この端末</h2>
       <p class="note">${esc(usage)}</p>
-      <p class="note">Voice Transcriber ${VERSION}</p>
+      ${asr.isMobile() && !(matchMedia("(display-mode: standalone)").matches || navigator.standalone) ? `<p class="note">iPhone の Safari は、しばらく開かないとブラウザ内のデータ（モデル・端末内の録音）を削除することがあります。ホーム画面に追加して使うと、この削除の対象外になるとされています（WebKit の公開情報による）。ログインして同期しておけば、録音はクラウドにも残ります。</p>` : ""}
+      <p class="note">Voice ${VERSION}</p>
     </div>`;
 
   $("#set-model", v).addEventListener("change", (e) => { asr.saveSettings({ model: e.target.value }); preloadState = ""; });
@@ -712,10 +727,11 @@ $("#rec-stop").addEventListener("click", async () => {
       toast("録音できませんでした");
     } else {
       await store.putAudio(r.id, blob);
-      await store.patch(r.id, { recording: false, has_audio: true, mime, duration_sec: Math.round(duration * 10) / 10 });
+      const saved = await store.patch(r.id, { recording: false, has_audio: true, mime, duration_sec: Math.round(duration * 10) / 10 });
       await store.clearChunks(r.id);
-      if (asr.settings().auto) asr.enqueue(r.id);
-      toast("保存しました");
+      const skipAuto = asr.exceedsAuto(saved);
+      if (asr.settings().auto && !skipAuto) asr.enqueue(r.id);
+      toast(skipAuto ? "保存しました。長い録音は PC での文字起こしがおすすめです" : "保存しました");
     }
   } finally {
     endRecordingUi();
@@ -826,8 +842,16 @@ async function init() {
   if (!cloud.mode()) showAuth(false);
   route();
 
+  // 前回、文字起こし中にブラウザごと落ちた録音は自動で再開しない（落ちる→再読み込み→再開、の繰り返しを防ぐ）。続きは手動で。
+  const crashed = asr.takeCrashed();
+  if (crashed && recs.some((r) => r.id === crashed)) {
+    await store.patch(crashed, { asr_error: "前回、文字起こしの途中でブラウザが終了しました。「文字起こしを開始」で続きから再開できます。" });
+    recs = await store.all();
+    renderList();
+  }
+
   if (asr.settings().auto) {
-    for (const r of recs.filter((r) => !r.deleted_at && r.has_audio && r.transcript_status === "pending")
+    for (const r of recs.filter((r) => r.id !== crashed && !r.deleted_at && r.has_audio && r.transcript_status === "pending" && !asr.exceedsAuto(r))
       .sort((a, b) => a.recorded_at.localeCompare(b.recorded_at))) asr.enqueue(r.id);
   }
   cloud.sync();

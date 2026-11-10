@@ -1,5 +1,5 @@
 {
-  "name": "Voice Transcriber",
+  "name": "Voice",
   "short_name": "文字起こし",
   "description": "録音して、端末内で文字起こし。MCP で Claude / ChatGPT から議事録を作成。",
   "lang": "ja",

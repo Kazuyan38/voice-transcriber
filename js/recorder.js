@@ -127,7 +127,7 @@ export async function recoverOrphans() {
     await store.putAudio(id, blob);
     const fields = { mime, has_audio: true, recording: false, duration_sec: chunks.length * (SLICE_MS / 1000) };
     if (existing) await store.patch(id, fields);
-    else await store.put(store.newRecord({ id, title: "", recorded_at: new Date(chunks[0].at - SLICE_MS).toISOString(), ...fields }));
+    else await store.put(store.newRecord({ id, recorded_at: new Date(chunks[0].at - SLICE_MS).toISOString(), ...fields }));
     await store.clearChunks(id);
     recovered.push(id);
   }

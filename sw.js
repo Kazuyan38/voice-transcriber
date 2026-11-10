@@ -1,6 +1,6 @@
 // オフライン対応と、マルチスレッド WASM（SharedArrayBuffer）に必要な COOP/COEP ヘッダの付与。
 // GitHub Pages ではレスポンスヘッダを設定できないため、Service Worker で同一オリジンの応答に付け直す。
-const VERSION = "v1.0.0";
+const VERSION = "v1.1.2";
 const APP = `app-${VERSION}`;
 const VENDOR = "vendor-3.8.1";
 const SHELL = [
