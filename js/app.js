@@ -3,7 +3,7 @@ import * as cloud from "./cloud.js";
 import * as asr from "./asr.js";
 import { Recording, supported as canRecord, recoverOrphans } from "./recorder.js";
 
-const VERSION = "1.1.0";
+const VERSION = "1.1.2";
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
