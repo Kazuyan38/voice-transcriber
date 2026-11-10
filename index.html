@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="文字起こし">
+<meta name="description" content="録音して、端末内で文字起こし。MCP で Claude / ChatGPT から議事録を作成。">
+<title>Voice Transcriber</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #0a0a0a;
+    --accent: #000000;
+    --on-accent: #ffffff;
+    --muted: #8c8c8c;
+    --soft: #f4f4f4;
+    --line: #ececec;
+    --ring: #cfcfcf;
+    --danger: #c62828;
+    --col: 680px;
+    --font: system-ui, -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: var(--font); }
+  body { min-height: 100dvh; -webkit-font-smoothing: antialiased; font-size: 16px; line-height: 1.5; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  [hidden] { display: none !important; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .col { max-width: var(--col); margin: 0 auto; padding-inline: 20px; }
+
+  /* ---------- 一覧 ---------- */
+  .top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: saturate(1.4) blur(12px); -webkit-backdrop-filter: saturate(1.4) blur(12px);
+    padding-top: max(10px, env(safe-area-inset-top)); }
+  .top .col { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding-block: 18px 12px; }
+  .top h1 { margin: 0; font-size: 34px; line-height: 1.1; font-weight: 750; letter-spacing: -0.03em; }
+  .top-right { display: flex; align-items: center; gap: 4px; }
+  .sync { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .sync::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ring); }
+  .sync[data-phase="ok"]::before { background: var(--accent); }
+  .sync[data-phase="syncing"]::before { background: var(--accent); animation: blink 1s infinite; }
+  .sync[data-phase="error"] { color: var(--danger); }
+  .sync[data-phase="error"]::before { background: var(--danger); }
+  .icon-btn { width: 44px; height: 44px; display: grid; place-items: center; border: 0; background: none; border-radius: 12px; }
+  .icon-btn:hover { background: var(--soft); }
+  .icon-btn svg { width: 22px; height: 22px; }
+
+  main { padding-bottom: calc(140px + env(safe-area-inset-bottom)); }
+  .group { margin-top: 18px; }
+  .group h2 { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+  .items { list-style: none; margin: 0; padding: 0; }
+  .item { display: grid; grid-template-columns: 28px 1fr 16px; align-items: center; gap: 14px; padding: 14px 0;
+    border-bottom: 1px solid var(--line); cursor: pointer; }
+  .item:last-child { border-bottom: 0; }
+  .item:active { opacity: .6; }
+  .check { width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid var(--ring); display: grid; place-items: center; transition: .25s; }
+  .check svg { width: 14px; height: 14px; opacity: 0; transform: scale(.6); transition: .25s; }
+  .check.done { background: var(--accent); border-color: var(--accent); }
+  .check.done svg { opacity: 1; transform: none; }
+  .check.live { border-color: var(--accent); border-style: dashed; animation: spin 6s linear infinite; }
+  .item .title { font-size: 16px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .title.untitled { color: var(--fg); }
+  .item.done .title { color: var(--muted); }
+  .meta { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 0 8px; }
+  .meta .strong { color: var(--fg); }
+  .chev { color: var(--ring); font-size: 20px; line-height: 1; }
+  .bar { height: 2px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 6px; }
+  .bar i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+
+  .empty { text-align: center; color: var(--muted); padding: 22vh 20px 0; }
+  .empty b { display: block; color: var(--fg); font-size: 18px; margin-bottom: 6px; }
+
+  .fab-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; display: flex; justify-content: center;
+    padding: 24px 0 calc(20px + env(safe-area-inset-bottom));
+    background: linear-gradient(to top, var(--bg) 55%, color-mix(in srgb, var(--bg) 0%, transparent)); pointer-events: none; }
+  .fab { pointer-events: auto; width: 68px; height: 68px; border-radius: 50%; border: 0; background: var(--accent); color: var(--on-accent);
+    display: grid; place-items: center; box-shadow: 0 10px 30px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12); transition: transform .15s; }
+  .fab:active { transform: scale(.94); }
+  .fab svg { width: 28px; height: 28px; }
+
+  /* ---------- シート（詳細・設定・録音・ログイン） ---------- */
+  .sheet { position: fixed; inset: 0; z-index: 20; background: var(--bg); overflow-y: auto; overscroll-behavior: contain;
+    padding-top: env(safe-area-inset-top); padding-bottom: calc(40px + env(safe-area-inset-bottom)); animation: rise .22s ease-out; }
+  .sheet-top { position: sticky; top: 0; z-index: 2; background: var(--bg); }
+  .sheet-top .col { display: flex; align-items: center; justify-content: space-between; height: 56px; }
+  .back { display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; padding: 10px 8px 10px 0; font-size: 16px; min-height: 44px; }
+  .back svg { width: 22px; height: 22px; }
+  .sheet h2 { font-size: 13px; font-weight: 600; color: var(--muted); letter-spacing: .04em; margin: 32px 0 10px; }
+  .sheet h2:first-child { margin-top: 8px; }
+
+  .title-input { width: 100%; border: 0; outline: 0; background: none; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; padding: 4px 0; }
+  .title-input::placeholder { color: var(--fg); }
+  audio { width: 100%; margin-top: 16px; height: 44px; }
+
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 0 20px;
+    border-radius: 12px; border: 1.5px solid var(--accent); background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .btn.ghost { background: var(--bg); color: var(--accent); }
+  .btn.quiet { border-color: transparent; background: var(--soft); color: var(--fg); }
+  .btn.danger { border-color: var(--danger); background: var(--bg); color: var(--danger); }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .btn.small { min-height: 36px; padding: 0 14px; font-size: 14px; border-radius: 10px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .note { font-size: 13px; color: var(--muted); }
+  .error { color: var(--danger); font-size: 14px; }
+  .card { border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+
+  .transcript { margin: 0; padding: 0; list-style: none; }
+  .transcript li { display: grid; grid-template-columns: 56px 1fr; gap: 10px; padding: 6px 0; }
+  .ts { border: 0; background: none; padding: 0; font-size: 13px; color: var(--muted); text-align: left; align-self: start; padding-top: 2px; }
+  .ts:hover { color: var(--fg); text-decoration: underline; }
+
+  .md { font-size: 15px; }
+  .md h1, .md h2, .md h3 { color: var(--fg); letter-spacing: -0.01em; margin: 1.2em 0 .4em; font-weight: 700; }
+  .md h1 { font-size: 21px; } .md h2 { font-size: 17px; } .md h3 { font-size: 15px; }
+  .md > :first-child { margin-top: 0; }
+  .md ul, .md ol { padding-left: 1.3em; margin: .4em 0; }
+  .md p { margin: .5em 0; }
+  .md code { background: var(--soft); padding: 1px 5px; border-radius: 5px; font-size: .92em; }
+  .md table { border-collapse: collapse; font-size: 14px; }
+  .md td, .md th { border: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+  .table-wrap { overflow-x: auto; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+  .badge .check { width: 18px; height: 18px; }
+  .badge .check svg { width: 10px; height: 10px; }
+
+  .field { display: grid; gap: 6px; margin-bottom: 14px; }
+  .field label { font-size: 13px; color: var(--muted); }
+  .field input, .field select { width: 100%; min-height: 48px; padding: 0 14px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--bg); outline: 0; }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .copybox { display: flex; gap: 8px; }
+  .copybox input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 13px; min-height: 44px;
+    padding: 0 12px; border: 1.5px solid var(--line); border-radius: 12px; background: var(--soft); }
+  details { border-top: 1px solid var(--line); padding: 12px 0; }
+  details:last-of-type { border-bottom: 1px solid var(--line); }
+  summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; justify-content: space-between; }
+  summary::after { content: "+"; color: var(--muted); }
+  details[open] summary::after { content: "−"; }
+  details ol { margin: 10px 0 0; padding-left: 1.3em; font-size: 14px; }
+  details li { margin: 4px 0; }
+  code.inline { font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; background: var(--soft); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
+  .switch { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 48px; }
+  .switch input { appearance: none; width: 48px; height: 28px; border-radius: 28px; background: var(--ring); position: relative; transition: .2s; flex: none; margin: 0; cursor: pointer; }
+  .switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; transition: .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  .switch input:checked { background: var(--accent); }
+  .switch input:checked::after { left: 23px; }
+
+  /* 録音画面 */
+  #view-rec { display: flex; flex-direction: column; }
+  #view-rec .stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 24px 20px; }
+  .rec-state { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; letter-spacing: .06em; }
+  .rec-state::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: blink 1.2s infinite; }
+  .rec-state.paused::before { animation: none; background: var(--ring); }
+  .timer { font-size: clamp(56px, 16vw, 88px); font-weight: 300; letter-spacing: -0.04em; line-height: 1; }
+  #wave { width: min(100%, 520px); height: 96px; }
+  .rec-controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; width: min(100%, 420px); gap: 12px;
+    padding: 0 20px calc(36px + env(safe-area-inset-bottom)); margin: 0 auto; }
+  .stop { width: 84px; height: 84px; border-radius: 50%; border: 0; background: var(--accent); display: grid; place-items: center; box-shadow: 0 10px 30px rgba(0,0,0,.2); }
+  .stop i { width: 28px; height: 28px; border-radius: 6px; background: var(--on-accent); }
+  .stop:active { transform: scale(.95); }
+  .rec-side { border: 0; background: none; font-size: 15px; font-weight: 600; min-height: 48px; padding: 0 8px; }
+  .rec-side:first-child { justify-self: start; }
+  .rec-side:last-child { justify-self: end; color: var(--muted); }
+  .rec-hint { font-size: 12px; color: var(--muted); text-align: center; max-width: 340px; }
+
+  /* ログイン */
+  #view-auth .col { min-height: 100%; display: flex; flex-direction: column; justify-content: center; max-width: 420px; padding-block: 40px; }
+  .mark { width: 56px; height: 56px; border-radius: 16px; background: var(--accent); display: grid; place-items: center; margin-bottom: 24px; }
+  .mark svg { width: 30px; height: 30px; }
+  .auth-title { font-size: 30px; font-weight: 750; letter-spacing: -0.03em; margin: 0 0 6px; }
+  .auth-lead { color: var(--muted); margin: 0 0 28px; font-size: 15px; }
+  .linkish { border: 0; background: none; padding: 8px 0; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; font-size: 14px; min-height: 44px; }
+  .auth-tabs { display: grid; grid-template-columns: 1fr 1fr; background: var(--soft); border-radius: 12px; padding: 4px; margin-bottom: 20px; }
+  .auth-tabs button { border: 0; background: none; min-height: 40px; border-radius: 9px; font-weight: 600; color: var(--muted); }
+  .auth-tabs button[aria-selected="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+
+  #toast { position: fixed; left: 50%; bottom: calc(110px + env(safe-area-inset-bottom)); transform: translate(-50%, 20px); z-index: 50;
+    background: var(--accent); color: var(--on-accent); padding: 12px 18px; border-radius: 12px; font-size: 14px; max-width: calc(100% - 40px);
+    opacity: 0; pointer-events: none; transition: .25s; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @keyframes blink { 50% { opacity: .25; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes rise { from { transform: translateY(12px); opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top" id="top">
+  <div class="col">
+    <h1>録音</h1>
+    <div class="top-right">
+      <span class="sync" id="sync" data-phase="idle"></span>
+      <button class="icon-btn" id="btn-settings" aria-label="設定">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main class="col" id="list" aria-live="polite"></main>
+
+<div class="fab-bar" id="fab-bar">
+  <button class="fab" id="btn-rec" aria-label="録音を開始">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+  </button>
+</div>
+
+<section class="sheet" id="view-detail" hidden></section>
+<section class="sheet" id="view-settings" hidden></section>
+
+<section class="sheet" id="view-rec" hidden aria-label="録音中">
+  <div class="stage">
+    <span class="rec-state" id="rec-state">録音中</span>
+    <div class="timer num" id="rec-timer">00:00</div>
+    <canvas id="wave" width="1040" height="192"></canvas>
+    <p class="rec-hint" id="rec-hint">画面を閉じたり他のアプリに切り替えると、録音が止まる場合があります（特に iPhone）。</p>
+  </div>
+  <div class="rec-controls">
+    <button class="rec-side" id="rec-pause">一時停止</button>
+    <button class="stop" id="rec-stop" aria-label="録音を停止して保存"><i></i></button>
+    <button class="rec-side" id="rec-cancel">破棄</button>
+  </div>
+</section>
+
+<section class="sheet" id="view-auth" hidden>
+  <div class="col">
+    <div class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg></div>
+    <h1 class="auth-title">Voice Transcriber</h1>
+    <p class="auth-lead">録音して、端末の中で文字起こし。<br>議事録は Claude / ChatGPT から MCP で。</p>
+    <div class="auth-tabs" role="tablist">
+      <button role="tab" id="tab-login" aria-selected="true">ログイン</button>
+      <button role="tab" id="tab-signup" aria-selected="false">新規登録</button>
+    </div>
+    <form id="auth-form" novalidate>
+      <div class="field"><label for="auth-email">メールアドレス</label><input id="auth-email" type="email" autocomplete="email" inputmode="email" required></div>
+      <div class="field"><label for="auth-pass">パスワード</label><input id="auth-pass" type="password" autocomplete="current-password" minlength="8" required></div>
+      <p class="error" id="auth-error" hidden></p>
+      <p class="note" id="auth-info" hidden></p>
+      <button class="btn" id="auth-submit" type="submit" style="width:100%">ログイン</button>
+    </form>
+    <div class="row" style="justify-content:space-between;margin-top:12px">
+      <button class="linkish" id="auth-local">ログインせずにこの端末だけで使う</button>
+      <button class="linkish" id="auth-cancel" hidden>戻る</button>
+    </div>
+  </div>
+</section>
+
+<div id="toast" role="status"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
